@@ -555,6 +555,40 @@
   .status-bar.online { color: #58a76f; background: rgba(255,255,255,0.9); }
   .status-bar.offline { color: #d97575; background: rgba(255,255,255,0.9); }
   .status-bar.connecting { color: #d4a352; background: rgba(255,255,255,0.9); }
+  .status-help {
+    margin: 8px 12px 0;
+    padding: 10px 12px;
+    border-radius: 18px;
+    background: rgba(255,255,255,0.72);
+    border: 1px solid rgba(125, 176, 156, 0.12);
+    box-shadow: 0 8px 18px rgba(116, 163, 142, 0.04);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    color: #789286;
+    font-size: 11px;
+    line-height: 1.6;
+  }
+  .status-help.hidden { display: none; }
+  .status-help-text {
+    min-width: 0;
+    flex: 1;
+  }
+  .status-help-btn {
+    flex-shrink: 0;
+    padding: 8px 12px;
+    border: none;
+    border-radius: 999px;
+    background: rgba(255,255,255,0.94);
+    border: 1px solid rgba(125, 176, 156, 0.16);
+    color: #4f7e6a;
+    font-size: 11px;
+    font-family: inherit;
+    cursor: pointer;
+    box-shadow: 0 6px 14px rgba(116, 163, 142, 0.05);
+  }
+  .status-help-btn:active { transform: scale(.98); }
 
   .msg-area {
     flex: 1; overflow-y: auto; padding: 16px 14px;
@@ -775,6 +809,10 @@
   </div>
 
   <div class="status-bar connecting" id="statusBar">连接中…</div>
+  <div class="status-help" id="statusHelp">
+    <div class="status-help-text" id="statusHelpText">第一次连接可能会慢一点，先等几秒；如果对方也在同一页面，请确认你们输入的是同一个暗号。</div>
+    <button class="status-help-btn" id="retryBtn">重试连接</button>
+  </div>
 
   <div class="msg-area" id="msgArea">
     <div class="empty-hint" id="emptyHint">
@@ -796,7 +834,7 @@
   'use strict';
 
   // ── 配置 ──
-  const MQTT_WS = 'wss://test.mosquitto.org:8081/mqtt'; // 免费公共 MQTT broker
+  const MQTT_WS = 'wss://broker.emqx.io:8084/mqtt'; // EMQX 官方示例 WebSocket 地址
   const TOPIC_PREFIX = 'heart-harbor-2026/';
 
   // ── 简易 AES 加密（兼容微信 WebView） ──
@@ -961,10 +999,39 @@
     setTimeout(() => el.remove(), 1600);
   }
 
+  function updateStatusUi(status) {
+    const bar = $('statusBar');
+    const help = $('statusHelp');
+    const helpText = $('statusHelpText');
+    bar.className = 'status-bar ' + status;
+
+    if (status === 'online') {
+      bar.textContent = '🟢 已连接，今天可以慢慢聊';
+      help.classList.remove('hidden');
+      helpText.textContent = '已经连上啦。现在只要对方也打开链接，并输入同一个暗号，你们就能互相收到消息。';
+      return;
+    }
+
+    if (status === 'connecting') {
+      bar.textContent = '🟡 正在轻轻连接中…';
+      help.classList.remove('hidden');
+      helpText.textContent = '第一次连接可能会慢一点，先等几秒；如果对方也在同一页面，请确认你们输入的是同一个暗号。';
+      return;
+    }
+
+    bar.textContent = '🔴 暂时断开，正在帮你重新连上';
+    help.classList.remove('hidden');
+    helpText.textContent = '如果一直断线，可以先点“重试连接”；也可以让对方刷新一次页面，并确认两边网络正常、暗号完全一致。';
+  }
+
   // ── 入口页逻辑 ──
   $('nickInput').addEventListener('keydown', e => { if (e.key === 'Enter') $('secretInput').focus(); });
   $('secretInput').addEventListener('keydown', e => { if (e.key === 'Enter') enterChat(); });
   $('enterBtn').addEventListener('click', enterChat);
+  $('retryBtn').addEventListener('click', () => {
+    toast('正在重新连接…');
+    reconnectMQTT();
+  });
 
   $('shareBtn').addEventListener('click', () => {
     const s = $('secretInput').value.trim();
@@ -1003,9 +1070,17 @@
     $('topNick').textContent = nickname;
 
     initMQTT();
+    toast('已进入港湾，请让对方也打开链接并输入同一个暗号');
   }
 
   // ── MQTT 通信 ──
+  function reconnectMQTT() {
+    if (mqtt) mqtt.destroy();
+    mqtt = null;
+    updateStatusUi('connecting');
+    initMQTT();
+  }
+
   function initMQTT() {
     const topic = TOPIC_PREFIX + roomId;
     mqtt = new TinyMQTT(MQTT_WS, {
@@ -1024,9 +1099,7 @@
         } catch {}
       },
       onStatus: (s) => {
-        const bar = $('statusBar');
-        bar.className = 'status-bar ' + s;
-        bar.textContent = s === 'online' ? '🟢 已连接，今天可以慢慢聊' : s === 'connecting' ? '🟡 正在轻轻连接中…' : '🔴 暂时断开，正在帮你重新连上';
+        updateStatusUi(s);
       },
     });
     mqtt.connect();
@@ -1050,6 +1123,10 @@
   function sendMessage() {
     const text = $('msgInput').value.trim();
     if (!text || !mqtt) return;
+    if (!mqtt.alive) {
+      toast('现在还没连上，先等等或点一下“重试连接”');
+      return;
+    }
 
     const msg = {
       id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
