@@ -986,6 +986,7 @@
   let secret = '';
   let roomId = '';
   let mqtt = null;
+  const sessionId = 'session_' + Math.random().toString(36).slice(2, 10);
   let messages = []; // { id, sender, text, time }
 
   // ── DOM ──
@@ -1090,7 +1091,7 @@
           if (obj.type === 'msg') {
             const text = decryptText(obj.enc, secret);
             if (text === null) return; // 密钥不匹配
-            if (obj.sender === nickname) return; // 自己发的忽略
+            if (obj.senderId && obj.senderId === sessionId) return; // 自己发的忽略
             if (messages.find(m => m.id === obj.id)) return; // 去重
             const msg = { id: obj.id, sender: obj.sender, text, time: obj.time };
             messages.push(msg);
@@ -1137,7 +1138,7 @@
 
     const enc = encryptText(text, secret);
     mqtt.publish(TOPIC_PREFIX + roomId, JSON.stringify({
-      type: 'msg', id: msg.id, sender: nickname, enc, time: msg.time,
+      type: 'msg', id: msg.id, senderId: sessionId, sender: nickname, enc, time: msg.time,
     }));
 
     $('msgInput').value = '';
